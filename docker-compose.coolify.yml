@@ -1,0 +1,153 @@
+# Coolify deployment for Freedium.
+#
+# This is the upstream "prod" service set, minus the bundled Caddy reverse
+# proxy. Coolify's Traefik terminates TLS and routes to freedium_web:7080.
+#
+# Services keep working from the repo root, so build contexts and bind
+# mounts are relative to the repository root.
+#
+# Requirements on the target server:
+#   - Docker must allow privileged containers (wgcf1 needs it).
+#   - The host kernel must support WireGuard (modprobe wireguard).
+#   - Enable "Preserve repository during deployment" in Coolify so the
+#     wgcf / proxy-balancer files stay available for the bind mounts.
+
+services:
+  freedium_web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    mem_limit: 4g
+    environment:
+      HOST_ADDRESS: ${HOST_ADDRESS:?}
+      ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:?}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres_freedium:5432/postgres}
+      REDIS_HOST: redis_service
+      REDIS_PORT: "6379"
+      TIMEOUT: "15"
+      PROXY_LIST: ${PROXY_LIST:-socks5://haproxy-pb:1080}
+    depends_on:
+      postgres_freedium:
+        condition: service_healthy
+      redis_service:
+        condition: service_healthy
+      haproxy-proxy-balancer:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:7080/ --max-time 80"]
+      interval: 30s
+      start_period: 30s
+      timeout: 80s
+      retries: 3
+    stop_grace_period: 2m
+
+  postgres_freedium:
+    image: postgres:16.3-alpine3.20
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis_service:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly
+    restart: always
+    mem_limit: 2g
+    ulimits:
+      memlock: -1
+    volumes:
+      - dragonfly_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      start_period: 20s
+      timeout: 10s
+      retries: 3
+
+  # Cloudflare WARP tunnel. Registers a free WARP account and brings up a
+  # WireGuard interface so outbound scraping does not come from the server IP.
+  wgcf1:
+    image: neilpang/wgcf-docker:latest
+    container_name: wgcf1
+    restart: always
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+    sysctls:
+      net.ipv6.conf.all.disable_ipv6: 0
+    volumes:
+      - /lib/modules:/lib/modules
+      - /etc/localtime:/etc/localtime:ro
+      - ./wgcf/entry.sh:/entry.sh
+    healthcheck:
+      test: curl -fs https://www.cloudflare.com/cdn-cgi/trace | grep -q -E 'warp=(on|plus)' && exit 0 || exit 1
+      interval: 5s
+      timeout: 2s
+      retries: 10000
+
+  # SOCKS5 proxy that egresses through the wgcf1 network namespace.
+  dante_1:
+    image: shturman/dante:1.4.2
+    container_name: dante_1
+    restart: always
+    network_mode: "service:wgcf1"
+    depends_on:
+      wgcf1:
+        condition: service_healthy
+    environment:
+      - CFGFILE=/etc/sockd.conf
+    volumes:
+      - ./wgcf/dante/sockd.conf:/etc/sockd.conf
+      - /etc/localtime:/etc/localtime:ro
+
+  # SOCKS5 load balancer in front of dante_1. The app connects to
+  # socks5://haproxy-pb:1080.
+  haproxy-proxy-balancer:
+    build:
+      context: ./proxy-balancer
+      dockerfile: Dockerfile
+    container_name: haproxy-proxy-balancer
+    hostname: haproxy-pb
+    restart: always
+    depends_on:
+      wgcf1:
+        condition: service_healthy
+      dante_1:
+        condition: service_started
+    volumes:
+      - ./proxy-balancer/haproxy:/usr/local/etc/haproxy/
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "1080"]
+      interval: 5s
+      timeout: 15s
+      retries: 3
+
+  # Watches the proxy and restarts wgcf1/dante_1 when WARP drops.
+  # Telegram is optional; leave TELEGRAM_* empty to skip notifications.
+  wgcf1_healthcare_service:
+    build:
+      context: ./wgcf/wgcf-healthcare
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      TG_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TG_CHAT_ID: ${TELEGRAM_ADMIN_ID:-}
+      CONTAINERS_TO_RESTART: wgcf1,dante_1
+      PROXY_HOST: wgcf1
+      PROXY_PORT: "1080"
+      SLEEP_DURATION: "30"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/localtime:/etc/localtime:ro
+
+volumes:
+  postgres_data:
+  dragonfly_data:
