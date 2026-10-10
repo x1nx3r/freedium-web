@@ -75,7 +75,9 @@ class MediumApi:
                     proxies={"http": proxy, "https": proxy} if proxy else None,
                     timeout=self.timeout,
                     impersonate=self.impersonate,
-                    http_version="v3"
+                    # HTTP/3 hangs through a SOCKS5 proxy and HTTP/1.1 gets a
+                    # Cloudflare challenge. HTTP/2 works over the proxy.
+                    http_version="v2" if proxy else "v3"
                 )
 
                 if response.status_code != 200:
