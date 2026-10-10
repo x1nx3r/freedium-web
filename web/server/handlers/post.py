@@ -98,6 +98,10 @@ async def render_medium_post_link(path: str, use_cache: bool = True, use_redis: 
         rendered_post = base_template.render(base_context)
         parsed_rendered_post = parse(rendered_post)
         serialized_rendered_post = serialize(parsed_rendered_post, encoding="utf-8")
+        # html5lib's serializer drops the doctype, which forces browsers into
+        # quirks mode. Put it back.
+        if not serialized_rendered_post.lstrip()[:15].lower().startswith(b"<!doctype"):
+            serialized_rendered_post = b"<!DOCTYPE html>\n" + serialized_rendered_post
 
         send_message(f"✅ Successfully rendered post: {path}", True, "GOOD")
         return HTMLResponse(serialized_rendered_post)

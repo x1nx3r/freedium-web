@@ -59,6 +59,10 @@ async def main_page():
     )
     parsed_template = parse(base_template_rendered)
     serialized_template = serialize(parsed_template, encoding="utf-8")
+    # html5lib's serializer drops the doctype, which forces browsers into
+    # quirks mode. Put it back.
+    if not serialized_template.lstrip()[:15].lower().startswith(b"<!doctype"):
+        serialized_template = b"<!DOCTYPE html>\n" + serialized_template
     return HTMLResponse(serialized_template)
 
 

@@ -148,6 +148,31 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /etc/localtime:/etc/localtime:ro
 
+  # Internal reverse proxy that serves the static assets (tailwind, favicons,
+  # robots.txt) and applies the upstream block rules. Traefik still terminates
+  # TLS and routes the domain to this service on port 6752.
+  caddy_freedium:
+    build:
+      context: ./caddy
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      freedium_web:
+        condition: service_healthy
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - ./caddy/static:/static
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:6752/ --max-time 20"]
+      interval: 30s
+      start_period: 15s
+      timeout: 20s
+      retries: 3
+
 volumes:
   postgres_data:
   dragonfly_data:
+  caddy_data:
+  caddy_config:
