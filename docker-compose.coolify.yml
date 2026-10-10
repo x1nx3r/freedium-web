@@ -139,7 +139,7 @@ services:
     restart: always
     environment:
       TG_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TG_CHAT_ID: ${TELEGRAM_ADMIN_ID:-}
+      TG_CHAT_ID: ${TELEGRAM_ADMIN_ID:-0}
       CONTAINERS_TO_RESTART: wgcf1,dante_1
       PROXY_HOST: wgcf1
       PROXY_PORT: "1080"
