@@ -27,7 +27,7 @@ services:
       REDIS_HOST: redis_service
       REDIS_PORT: "6379"
       TIMEOUT: "15"
-      PROXY_LIST: ${PROXY_LIST:-socks5://haproxy-pb:1080}
+      PROXY_LIST: ${PROXY_LIST:-socks5://haproxy-proxy-balancer:1080}
     depends_on:
       postgres_freedium:
         condition: service_healthy
@@ -61,8 +61,10 @@ services:
   redis_service:
     image: docker.dragonflydb.io/dragonflydb/dragonfly
     restart: always
-    # Trimmed from the upstream 2g-5g; the cache rarely needs more here.
-    mem_limit: 768m
+    # Dragonfly sizes memory by thread count (~256m per thread). Cap the
+    # threads so it fits the trimmed memory limit.
+    command: ["dragonfly", "--logtostderr", "--proactor_threads=2"]
+    mem_limit: 1g
     ulimits:
       memlock: -1
     volumes:
@@ -78,7 +80,6 @@ services:
   # WireGuard interface so outbound scraping does not come from the server IP.
   wgcf1:
     image: neilpang/wgcf-docker:latest
-    container_name: wgcf1
     restart: always
     privileged: true
     cap_add:
@@ -98,7 +99,6 @@ services:
   # SOCKS5 proxy that egresses through the wgcf1 network namespace.
   dante_1:
     image: shturman/dante:1.4.2
-    container_name: dante_1
     restart: always
     network_mode: "service:wgcf1"
     depends_on:
@@ -116,8 +116,6 @@ services:
     build:
       context: ./proxy-balancer
       dockerfile: Dockerfile
-    container_name: haproxy-proxy-balancer
-    hostname: haproxy-pb
     restart: always
     depends_on:
       wgcf1:

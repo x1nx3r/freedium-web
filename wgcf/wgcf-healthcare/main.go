@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/client"
 	"golang.org/x/net/proxy"
 )
@@ -68,12 +69,36 @@ func restartContainers() {
 	}
 	log.Printf("Stop timeout set to %d seconds", stopTimeout)
 
-	for _, containerName := range containersToRestart {
-		log.Printf("Attempting to restart container: %s", containerName)
-		if err := cli.ContainerRestart(context.Background(), containerName, stopOptions); err != nil {
-			log.Printf("Error restarting %s: %v", containerName, err)
-		} else {
-			log.Printf("%s restarted successfully.", containerName)
+	for _, serviceName := range containersToRestart {
+		serviceName = strings.TrimSpace(serviceName)
+		if serviceName == "" {
+			continue
+		}
+		// Coolify renames containers on every deployment, so a fixed
+		// container name does not work. Resolve the container by the
+		// Compose service label instead.
+		filterArgs := filters.NewArgs()
+		filterArgs.Add("label", "com.docker.compose.service="+serviceName)
+		list, err := cli.ContainerList(context.Background(), container.ListOptions{All: true, Filters: filterArgs})
+		if err != nil {
+			log.Printf("Error listing containers for service %s: %v", serviceName, err)
+			continue
+		}
+		if len(list) == 0 {
+			log.Printf("No containers found for service %s", serviceName)
+			continue
+		}
+		for _, c := range list {
+			name := c.ID
+			if len(c.Names) > 0 {
+				name = strings.TrimPrefix(c.Names[0], "/")
+			}
+			log.Printf("Attempting to restart container: %s (service %s)", name, serviceName)
+			if err := cli.ContainerRestart(context.Background(), c.ID, stopOptions); err != nil {
+				log.Printf("Error restarting %s: %v", name, err)
+			} else {
+				log.Printf("%s restarted successfully.", name)
+			}
 		}
 	}
 	log.Println("Container restart process completed")

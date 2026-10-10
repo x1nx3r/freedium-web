@@ -69,6 +69,8 @@ runwgcf() {
     fi
 
     modprobe ip6table_raw
+    # wg-quick's IPv4 rules need the "raw" table; the IPv6 module alone is not enough.
+    modprobe iptable_raw
 
     wg-quick up wgcf
 
