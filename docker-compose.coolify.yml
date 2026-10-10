@@ -18,7 +18,8 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: always
-    mem_limit: 4g
+    # Trimmed from the upstream 4g to protect the shared Coolify host.
+    mem_limit: 1536m
     environment:
       HOST_ADDRESS: ${HOST_ADDRESS:?}
       ADMIN_SECRET_KEY: ${ADMIN_SECRET_KEY:?}
@@ -60,7 +61,8 @@ services:
   redis_service:
     image: docker.dragonflydb.io/dragonflydb/dragonfly
     restart: always
-    mem_limit: 2g
+    # Trimmed from the upstream 2g-5g; the cache rarely needs more here.
+    mem_limit: 768m
     ulimits:
       memlock: -1
     volumes:
